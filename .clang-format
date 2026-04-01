@@ -1,42 +1,83 @@
-Language:        Cpp
-BasedOnStyle:    LLVM
-Standard:        c++17
+Language: Cpp
+BasedOnStyle: LLVM
 
-# Vulkan functions and structs get very long. 120 is a generous, modern limit.
-ColumnLimit:     120
+# Indentation
+IndentWidth: 4
+TabWidth: 4
+UseTab: Always
+IndentCaseLabels: true
+IndentPPDirectives: BeforeHash
+NamespaceIndentation: All
 
-# Indentation (4 spaces is highly recommended for readability in tutorials)
-IndentWidth:     4
-TabWidth:        4
-UseTab:          Never
+# Braces
+BreakBeforeBraces: Allman
 
-# Pointer alignment (e.g., `VkBuffer* buffer;` instead of `VkBuffer *buffer;`)
-PointerAlignment: Left
-DerivePointerAlignment: false
+# Line length
+ColumnLimit: 120
 
-# Braces and Blocks
-BreakBeforeBraces: Attach
-AllowShortFunctionsOnASingleLine: Inline
-AllowShortIfStatementsOnASingleLine: false
-AllowShortLoopsOnASingleLine: false
-
-# Class and Struct formatting
-AccessModifierOffset: -4
-
-# Alignment for cleaner Vulkan struct initializations
-AlignAfterOpenBracket: Align
-AlignConsecutiveMacros: true
+# Alignment
+AlignAfterOpenBracket: DontAlign
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignOperands: true
 AlignTrailingComments: true
 
+# Lambdas
+LambdaBodyIndentation: Signature
+
+# Short forms
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+
+# Breaking
+BreakConstructorInitializers: BeforeColon
+BreakInheritanceList: BeforeColon
+AlwaysBreakTemplateDeclarations: Yes
+BinPackArguments: true
+BinPackParameters: true
+ContinuationIndentWidth: 4
+
+# Blank lines
+SeparateDefinitionBlocks: Always    # <-- Adds blank line between functions/classes
+MaxEmptyLinesToKeep: 1
+
 # Spacing
+SpaceAfterCStyleCast: false
+SpaceAfterTemplateKeyword: true
 SpaceBeforeAssignmentOperators: true
 SpaceBeforeParens: ControlStatements
 SpaceInEmptyParentheses: false
-SpacesInAngles:  false
+SpacesInAngles: false
 SpacesInCStyleCastParentheses: false
 SpacesInParentheses: false
+SpacesInSquareBrackets: false
 
-# Clean up
-MaxEmptyLinesToKeep: 1
+# Pointers and references
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Includes
+IncludeBlocks: Regroup
+SortIncludes: CaseSensitive
+IncludeCategories:
+  - Regex: '^<[a-z_]+>$'
+    Priority: 4
+  - Regex: '^<.+\.h>'
+    Priority: 3
+  - Regex: '^<.+>'
+    Priority: 2
+  - Regex: '.*'
+    Priority: 1
+
+# Access modifiers
+AccessModifierOffset: -4
+
+# Misc
+FixNamespaceComments: true
 ReflowComments: true
-SortIncludes: true
+SortUsingDeclarations: true
+Cpp11BracedListStyle: true
