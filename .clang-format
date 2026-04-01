@@ -1,0 +1,42 @@
+Language:        Cpp
+BasedOnStyle:    LLVM
+Standard:        c++17
+
+# Vulkan functions and structs get very long. 120 is a generous, modern limit.
+ColumnLimit:     120
+
+# Indentation (4 spaces is highly recommended for readability in tutorials)
+IndentWidth:     4
+TabWidth:        4
+UseTab:          Never
+
+# Pointer alignment (e.g., `VkBuffer* buffer;` instead of `VkBuffer *buffer;`)
+PointerAlignment: Left
+DerivePointerAlignment: false
+
+# Braces and Blocks
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+
+# Class and Struct formatting
+AccessModifierOffset: -4
+
+# Alignment for cleaner Vulkan struct initializations
+AlignAfterOpenBracket: Align
+AlignConsecutiveMacros: true
+AlignTrailingComments: true
+
+# Spacing
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesInAngles:  false
+SpacesInCStyleCastParentheses: false
+SpacesInParentheses: false
+
+# Clean up
+MaxEmptyLinesToKeep: 1
+ReflowComments: true
+SortIncludes: true
