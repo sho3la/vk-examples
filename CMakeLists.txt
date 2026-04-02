@@ -24,6 +24,15 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(glfw)
 
+# Fetch GLM (header-only math library)
+message(STATUS "Fetching GLM...")
+FetchContent_Declare(
+    glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG        1.0.1
+)
+FetchContent_MakeAvailable(glm)
+
 # Find Vulkan (User must have the Vulkan SDK installed)
 find_package(Vulkan REQUIRED)
 
@@ -31,3 +40,4 @@ find_package(Vulkan REQUIRED)
 # EXAMPLES
 # ---------------------------------------------------------
 add_subdirectory(examples/01_clear_screen)
+add_subdirectory(examples/02_rotating_cube)
