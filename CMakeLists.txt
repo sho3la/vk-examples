@@ -41,3 +41,4 @@ find_package(Vulkan REQUIRED)
 # ---------------------------------------------------------
 add_subdirectory(examples/01_clear_screen)
 add_subdirectory(examples/02_rotating_cube)
+add_subdirectory(examples/03_point_lights)
