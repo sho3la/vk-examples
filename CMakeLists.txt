@@ -33,6 +33,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
+# Fetch stb (single-header image loading / writing)
+message(STATUS "Fetching stb...")
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG        master
+)
+FetchContent_MakeAvailable(stb)
+add_library(stb INTERFACE)
+target_include_directories(stb INTERFACE ${stb_SOURCE_DIR})
+
 # Find Vulkan (User must have the Vulkan SDK installed)
 find_package(Vulkan REQUIRED)
 
@@ -45,3 +56,4 @@ add_subdirectory(examples/02_rotating_cube)
 add_subdirectory(examples/03_point_lights)
 add_subdirectory(examples/04_spot_lights)
 add_subdirectory(examples/05_texture)
+add_subdirectory(examples/06_texture_stb)
