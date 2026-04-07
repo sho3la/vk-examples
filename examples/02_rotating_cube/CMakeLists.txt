@@ -1,10 +1,6 @@
 add_executable(02_rotating_cube main.cpp)
 
-target_link_libraries(02_rotating_cube PRIVATE
-    Vulkan::Vulkan
-    glfw
-    glm::glm
-)
+target_link_libraries(02_rotating_cube PRIVATE vk_common)
 
 # --- Compile GLSL shaders to SPIR-V at build time ---
 find_program(GLSLC glslc HINTS "$ENV{VULKAN_SDK}/bin")

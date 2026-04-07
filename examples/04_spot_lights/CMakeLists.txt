@@ -1,10 +1,6 @@
 add_executable(04_spot_lights main.cpp)
 
-target_link_libraries(04_spot_lights PRIVATE
-    Vulkan::Vulkan
-    glfw
-    glm::glm
-)
+target_link_libraries(04_spot_lights PRIVATE vk_common)
 
 # --- Compile GLSL shaders to SPIR-V at build time ---
 find_program(GLSLC glslc HINTS "$ENV{VULKAN_SDK}/bin")
