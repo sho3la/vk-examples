@@ -192,15 +192,14 @@ protected:
 		vkBindBufferMemory(device, buffer, memory, 0);
 	}
 
-	// Copy size bytes from src to dst using a one-shot command buffer.
-	void copyBuffer(VkBuffer src, VkBuffer dst, VkDeviceSize size)
+	// Allocate and begin a one-shot command buffer for transfer / upload operations.
+	VkCommandBuffer beginOneTimeCommands()
 	{
 		VkCommandBufferAllocateInfo ai{};
-		ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-		ai.commandPool = commandPool;
-		ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		ai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		ai.commandPool        = commandPool;
+		ai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 		ai.commandBufferCount = 1;
-
 		VkCommandBuffer cmd;
 		vkAllocateCommandBuffers(device, &ai, &cmd);
 
@@ -208,19 +207,30 @@ protected:
 		bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 		bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		vkBeginCommandBuffer(cmd, &bi);
+		return cmd;
+	}
 
-		VkBufferCopy region{};
-		region.size = size;
-		vkCmdCopyBuffer(cmd, src, dst, 1, &region);
+	// Submit and free a one-shot command buffer created by beginOneTimeCommands().
+	void endOneTimeCommands(VkCommandBuffer cmd)
+	{
 		vkEndCommandBuffer(cmd);
-
 		VkSubmitInfo si{};
-		si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 		si.commandBufferCount = 1;
-		si.pCommandBuffers = &cmd;
+		si.pCommandBuffers    = &cmd;
 		vkQueueSubmit(graphicsQueue, 1, &si, VK_NULL_HANDLE);
 		vkQueueWaitIdle(graphicsQueue);
 		vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+	}
+
+	// Copy size bytes from src to dst using a one-shot command buffer.
+	void copyBuffer(VkBuffer src, VkBuffer dst, VkDeviceSize size)
+	{
+		VkCommandBuffer cmd = beginOneTimeCommands();
+		VkBufferCopy region{};
+		region.size = size;
+		vkCmdCopyBuffer(cmd, src, dst, 1, &region);
+		endOneTimeCommands(cmd);
 	}
 
 	// Read a binary file into a byte vector (for loading SPIR-V).
@@ -258,23 +268,208 @@ protected:
 		VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT)
 	{
 		VkImageMemoryBarrier2 barrier{};
-		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-		barrier.srcStageMask = srcStage;
-		barrier.srcAccessMask = srcAccess;
-		barrier.dstStageMask = dstStage;
-		barrier.dstAccessMask = dstAccess;
-		barrier.oldLayout = oldLayout;
-		barrier.newLayout = newLayout;
+		barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+		barrier.srcStageMask        = srcStage;
+		barrier.srcAccessMask       = srcAccess;
+		barrier.dstStageMask        = dstStage;
+		barrier.dstAccessMask       = dstAccess;
+		barrier.oldLayout           = oldLayout;
+		barrier.newLayout           = newLayout;
 		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		barrier.image = image;
-		barrier.subresourceRange = {aspect, 0, 1, 0, 1};
+		barrier.image               = image;
+		barrier.subresourceRange    = {aspect, 0, 1, 0, 1};
 
 		VkDependencyInfo dep{};
-		dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+		dep.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
 		dep.imageMemoryBarrierCount = 1;
-		dep.pImageMemoryBarriers = &barrier;
+		dep.pImageMemoryBarriers    = &barrier;
 		vkCmdPipelineBarrier2(cmd, &dep);
+	}
+
+	// -----------------------------------------------------------------------
+	// Image helpers
+	// -----------------------------------------------------------------------
+
+	// Create a 2-D VkImage backed by device memory.
+	void createImage(uint32_t w, uint32_t h, VkFormat format,
+		VkImageTiling tiling, VkImageUsageFlags usage,
+		VkMemoryPropertyFlags memProps,
+		VkImage& image, VkDeviceMemory& memory)
+	{
+		VkImageCreateInfo ci{};
+		ci.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		ci.imageType     = VK_IMAGE_TYPE_2D;
+		ci.format        = format;
+		ci.extent        = {w, h, 1};
+		ci.mipLevels     = 1;
+		ci.arrayLayers   = 1;
+		ci.samples       = VK_SAMPLE_COUNT_1_BIT;
+		ci.tiling        = tiling;
+		ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		ci.usage         = usage;
+		ci.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+		if (vkCreateImage(device, &ci, nullptr, &image) != VK_SUCCESS)
+			throw std::runtime_error("failed to create image!");
+
+		VkMemoryRequirements req;
+		vkGetImageMemoryRequirements(device, image, &req);
+		VkMemoryAllocateInfo ai{};
+		ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		ai.allocationSize  = req.size;
+		ai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, memProps);
+		if (vkAllocateMemory(device, &ai, nullptr, &memory) != VK_SUCCESS)
+			throw std::runtime_error("failed to allocate image memory!");
+		vkBindImageMemory(device, image, memory, 0);
+	}
+
+	// Create a 2-D VkImageView.
+	VkImageView createImageView(VkImage image, VkFormat format,
+		VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT)
+	{
+		VkImageViewCreateInfo ci{};
+		ci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		ci.image            = image;
+		ci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+		ci.format           = format;
+		ci.subresourceRange = {aspect, 0, 1, 0, 1};
+		VkImageView view;
+		if (vkCreateImageView(device, &ci, nullptr, &view) != VK_SUCCESS)
+			throw std::runtime_error("failed to create image view!");
+		return view;
+	}
+
+	// Copy a buffer into a VkImage (image must be in TRANSFER_DST_OPTIMAL layout).
+	void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t w, uint32_t h)
+	{
+		VkCommandBuffer cmd = beginOneTimeCommands();
+		VkBufferImageCopy region{};
+		region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+		region.imageExtent      = {w, h, 1};
+		vkCmdCopyBufferToImage(cmd, buffer, image,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+		endOneTimeCommands(cmd);
+	}
+
+	// -----------------------------------------------------------------------
+	// Buffer helpers
+	// -----------------------------------------------------------------------
+
+	// Upload arbitrary data to a device-local buffer via a temporary staging buffer.
+	// outBuffer / outMemory receive the final device-local buffer.
+	// usage should be the intended usage flag (e.g. VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+	// VK_BUFFER_USAGE_TRANSFER_DST_BIT is added automatically.
+	void uploadStagedBuffer(const void* data, VkDeviceSize size,
+		VkBufferUsageFlags usage,
+		VkBuffer& outBuffer, VkDeviceMemory& outMemory)
+	{
+		VkBuffer staging; VkDeviceMemory stagingMem;
+		createBuffer(size,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			staging, stagingMem);
+		void* ptr;
+		vkMapMemory(device, stagingMem, 0, size, 0, &ptr);
+		std::memcpy(ptr, data, static_cast<size_t>(size));
+		vkUnmapMemory(device, stagingMem);
+
+		createBuffer(size,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			outBuffer, outMemory);
+		copyBuffer(staging, outBuffer, size);
+		vkDestroyBuffer(device, staging, nullptr);
+		vkFreeMemory(device, stagingMem, nullptr);
+	}
+
+	// -----------------------------------------------------------------------
+	// Depth resource helpers
+	// -----------------------------------------------------------------------
+
+	// Create a depth image sized to the current swapchain extent.
+	// Typical format: VK_FORMAT_D32_SFLOAT
+	void createDepthResources(VkFormat format,
+		VkImage& image, VkDeviceMemory& memory, VkImageView& view)
+	{
+		createImage(swapChainExtent.width, swapChainExtent.height, format,
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			image, memory);
+		view = createImageView(image, format, VK_IMAGE_ASPECT_DEPTH_BIT);
+	}
+
+	// Destroy depth resources created by createDepthResources() and null out handles.
+	void destroyDepthResources(VkImage& image, VkDeviceMemory& memory, VkImageView& view)
+	{
+		vkDestroyImageView(device, view,   nullptr); view   = VK_NULL_HANDLE;
+		vkDestroyImage    (device, image,  nullptr); image  = VK_NULL_HANDLE;
+		vkFreeMemory      (device, memory, nullptr); memory = VK_NULL_HANDLE;
+	}
+
+	// -----------------------------------------------------------------------
+	// Uniform buffer helpers
+	// -----------------------------------------------------------------------
+
+	// Create 'count' persistently-mapped uniform buffers of the given size.
+	// All three output vectors are resized and filled.
+	// Typical usage: createPersistentUBOs(sizeof(MyUBO), MAX_FRAMES_IN_FLIGHT, ...)
+	void createPersistentUBOs(VkDeviceSize uboSize, uint32_t count,
+		std::vector<VkBuffer>&       buffers,
+		std::vector<VkDeviceMemory>& memories,
+		std::vector<void*>&          mapped)
+	{
+		buffers .resize(count);
+		memories.resize(count);
+		mapped  .resize(count);
+		for (uint32_t i = 0; i < count; ++i)
+		{
+			createBuffer(uboSize,
+				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				buffers[i], memories[i]);
+			vkMapMemory(device, memories[i], 0, uboSize, 0, &mapped[i]);
+		}
+	}
+
+	// Destroy uniform buffers created by createPersistentUBOs() and clear vectors.
+	void destroyUBOs(std::vector<VkBuffer>& buffers, std::vector<VkDeviceMemory>& memories)
+	{
+		for (size_t i = 0; i < buffers.size(); ++i)
+		{
+			vkDestroyBuffer(device, buffers[i],  nullptr);
+			vkFreeMemory   (device, memories[i], nullptr);
+		}
+		buffers .clear();
+		memories.clear();
+	}
+
+	// -----------------------------------------------------------------------
+	// Sampler helper
+	// -----------------------------------------------------------------------
+
+	// Create a VkSampler with common parameters.
+	// Pass enableCompare = true and a compareOp for shadow / depth sampler usage.
+	VkSampler createSampler(
+		VkFilter              filter      = VK_FILTER_LINEAR,
+		VkSamplerAddressMode  addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		bool                  enableCompare = false,
+		VkCompareOp           compareOp   = VK_COMPARE_OP_LESS)
+	{
+		VkSamplerCreateInfo ci{};
+		ci.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		ci.magFilter    = filter;
+		ci.minFilter    = filter;
+		ci.addressModeU = addressMode;
+		ci.addressModeV = addressMode;
+		ci.addressModeW = addressMode;
+		ci.compareEnable = enableCompare ? VK_TRUE : VK_FALSE;
+		ci.compareOp     = compareOp;
+		ci.borderColor   = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+		VkSampler sampler;
+		if (vkCreateSampler(device, &ci, nullptr, &sampler) != VK_SUCCESS)
+			throw std::runtime_error("failed to create sampler!");
+		return sampler;
 	}
 
 private:

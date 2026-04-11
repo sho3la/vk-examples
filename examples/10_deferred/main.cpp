@@ -1,5 +1,7 @@
 
 #include "../common/vk_common.h"
+#include "../common/vk_pipelines.h"
+#include "../common/vk_descriptors.h"
 
 // ---------------------------------------------------------------------------
 // 10 – Deferred Rendering
@@ -84,27 +86,6 @@ static uint32_t addBox(std::vector<Vertex>& verts, std::vector<uint16_t>& idx,
 }
 
 // ---------------------------------------------------------------------------
-// Shader loader
-// ---------------------------------------------------------------------------
-
-static VkShaderModule loadShader(VkDevice device, const std::string& path)
-{
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
-    if (!f.is_open())
-        throw std::runtime_error("Cannot open shader: " + path);
-    auto sz = static_cast<size_t>(f.tellg());
-    f.seekg(0);
-    std::vector<uint32_t> code(sz / 4);
-    f.read(reinterpret_cast<char*>(code.data()), sz);
-    VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    ci.codeSize = sz; ci.pCode = code.data();
-    VkShaderModule mod;
-    if (vkCreateShaderModule(device, &ci, nullptr, &mod) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shader module: " + path);
-    return mod;
-}
-
-// ---------------------------------------------------------------------------
 // Application
 // ---------------------------------------------------------------------------
 
@@ -183,65 +164,6 @@ private:
     VkBuffer       sceneIB  = VK_NULL_HANDLE; VkDeviceMemory sceneIBMem  = VK_NULL_HANDLE;
 
     // =======================================================================
-    // Image helpers
-    // =======================================================================
-
-    void createImage2D(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags usage,
-        VkImage& img, VkDeviceMemory& mem)
-    {
-        VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        ci.imageType = VK_IMAGE_TYPE_2D; ci.format = fmt;
-        ci.extent    = {w, h, 1};        ci.mipLevels = 1; ci.arrayLayers = 1;
-        ci.samples   = VK_SAMPLE_COUNT_1_BIT;
-        ci.tiling    = VK_IMAGE_TILING_OPTIMAL;
-        ci.usage     = usage;
-        if (vkCreateImage(device, &ci, nullptr, &img) != VK_SUCCESS)
-            throw std::runtime_error("failed to create image");
-        VkMemoryRequirements req;
-        vkGetImageMemoryRequirements(device, img, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize  = req.size;
-        ai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        if (vkAllocateMemory(device, &ai, nullptr, &mem) != VK_SUCCESS)
-            throw std::runtime_error("failed to allocate image memory");
-        vkBindImageMemory(device, img, mem, 0);
-    }
-
-    VkImageView createImageView2D(VkImage img, VkFormat fmt, VkImageAspectFlags aspect)
-    {
-        VkImageViewCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        ci.image            = img;
-        ci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-        ci.format           = fmt;
-        ci.subresourceRange = {aspect, 0, 1, 0, 1};
-        VkImageView view;
-        if (vkCreateImageView(device, &ci, nullptr, &view) != VK_SUCCESS)
-            throw std::runtime_error("failed to create image view");
-        return view;
-    }
-
-    // One-shot command buffer helper
-    template<typename Fn>
-    void oneShot(Fn&& fn)
-    {
-        VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        cai.commandPool = commandPool; cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        cai.commandBufferCount = 1;
-        VkCommandBuffer cmd;
-        vkAllocateCommandBuffers(device, &cai, &cmd);
-        VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &bi);
-        fn(cmd);
-        vkEndCommandBuffer(cmd);
-        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
-        vkQueueSubmit(graphicsQueue, 1, &si, VK_NULL_HANDLE);
-        vkQueueWaitIdle(graphicsQueue);
-        vkFreeCommandBuffers(device, commandPool, 1, &cmd);
-    }
-
-    // =======================================================================
     // Barrier shorthand
     // =======================================================================
 
@@ -273,12 +195,12 @@ private:
         gBuffers.resize(MAX_FRAMES_IN_FLIGHT);
         for (auto& g : gBuffers)
         {
-            createImage2D(w, h, FMT_POSITION, usage, g.position, g.positionMem);
-            createImage2D(w, h, FMT_NORMAL,   usage, g.normal,   g.normalMem);
-            createImage2D(w, h, FMT_ALBEDO,   usage, g.albedo,   g.albedoMem);
-            g.positionView = createImageView2D(g.position, FMT_POSITION, VK_IMAGE_ASPECT_COLOR_BIT);
-            g.normalView   = createImageView2D(g.normal,   FMT_NORMAL,   VK_IMAGE_ASPECT_COLOR_BIT);
-            g.albedoView   = createImageView2D(g.albedo,   FMT_ALBEDO,   VK_IMAGE_ASPECT_COLOR_BIT);
+            createImage(w, h, FMT_POSITION, VK_IMAGE_TILING_OPTIMAL, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, g.position, g.positionMem);
+            createImage(w, h, FMT_NORMAL,   VK_IMAGE_TILING_OPTIMAL, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, g.normal,   g.normalMem);
+            createImage(w, h, FMT_ALBEDO,   VK_IMAGE_TILING_OPTIMAL, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, g.albedo,   g.albedoMem);
+            g.positionView = createImageView(g.position, FMT_POSITION);
+            g.normalView   = createImageView(g.normal,   FMT_NORMAL);
+            g.albedoView   = createImageView(g.albedo,   FMT_ALBEDO);
         }
     }
 
@@ -297,39 +219,13 @@ private:
     }
 
     // =======================================================================
-    // Depth
-    // =======================================================================
-
-    void createDepthResources()
-    {
-        createImage2D(swapChainExtent.width, swapChainExtent.height, depthFormat,
-            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depthImage, depthMemory);
-        depthImageView = createImageView2D(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
-    }
-
-    void cleanupDepthResources()
-    {
-        vkDestroyImageView(device, depthImageView, nullptr); depthImageView = VK_NULL_HANDLE;
-        vkDestroyImage(device, depthImage, nullptr);         depthImage     = VK_NULL_HANDLE;
-        vkFreeMemory(device, depthMemory, nullptr);          depthMemory    = VK_NULL_HANDLE;
-    }
-
-    // =======================================================================
     // Sampler
     // =======================================================================
 
     void createSamplers()
     {
         // Nearest-clamp for G-buffer reads — no interpolation between geometry boundaries
-        VkSamplerCreateInfo ci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        ci.magFilter    = VK_FILTER_NEAREST;
-        ci.minFilter    = VK_FILTER_NEAREST;
-        ci.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-        ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        if (vkCreateSampler(device, &ci, nullptr, &gbufferSampler) != VK_SUCCESS)
-            throw std::runtime_error("failed to create G-buffer sampler");
+        gbufferSampler = createSampler(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
     }
 
     // =======================================================================
@@ -338,39 +234,22 @@ private:
 
     void createDescriptorSetLayouts()
     {
-        auto mkBinding = [](uint32_t binding, VkDescriptorType type,
-            VkShaderStageFlags stage) {
-            VkDescriptorSetLayoutBinding b{};
-            b.binding = binding; b.descriptorType = type;
-            b.descriptorCount = 1; b.stageFlags = stage;
-            return b;
-        };
-
         // Geometry pass — material UBO (fragment only)
-        {
-            auto b = mkBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT);
-            VkDescriptorSetLayoutCreateInfo ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            ci.bindingCount = 1; ci.pBindings = &b;
-            vkCreateDescriptorSetLayout(device, &ci, nullptr, &geomMatLayout);
-        }
+        geomMatLayout = DescriptorLayoutBuilder()
+            .addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .build(device);
+
         // Lighting pass — 3 G-buffer CIS (fragment only)
-        {
-            VkDescriptorSetLayoutBinding b[3] = {
-                mkBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT),
-                mkBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT),
-                mkBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT),
-            };
-            VkDescriptorSetLayoutCreateInfo ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            ci.bindingCount = 3; ci.pBindings = b;
-            vkCreateDescriptorSetLayout(device, &ci, nullptr, &gbufferLayout);
-        }
+        gbufferLayout = DescriptorLayoutBuilder()
+            .addBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .build(device);
+
         // Lighting pass — lighting UBO (fragment only)
-        {
-            auto b = mkBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT);
-            VkDescriptorSetLayoutCreateInfo ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            ci.bindingCount = 1; ci.pBindings = &b;
-            vkCreateDescriptorSetLayout(device, &ci, nullptr, &lightUBOLayout);
-        }
+        lightUBOLayout = DescriptorLayoutBuilder()
+            .addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .build(device);
     }
 
     // =======================================================================
@@ -380,20 +259,13 @@ private:
     void createDescriptorPool()
     {
         uint32_t n = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-        VkDescriptorPoolSize sizes[2]{};
         // UBO: MAT_COUNT material UBOs (static) + n lighting UBOs (per-frame)
-        sizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        sizes[0].descriptorCount = MAT_COUNT + n;
         // CIS: 3 G-buffer samplers per frame
-        sizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        sizes[1].descriptorCount = 3 * n;
-
-        VkDescriptorPoolCreateInfo ci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        ci.poolSizeCount = 2; ci.pPoolSizes = sizes;
         // sets: MAT_COUNT + n (gbuffer) + n (lightUBO)
-        ci.maxSets = static_cast<uint32_t>(MAT_COUNT) + 2 * n;
-        if (vkCreateDescriptorPool(device, &ci, nullptr, &descriptorPool) != VK_SUCCESS)
-            throw std::runtime_error("failed to create descriptor pool");
+        descriptorPool = DescriptorPoolBuilder()
+            .addSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         MAT_COUNT + n)
+            .addSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 * n)
+            .build(device, MAT_COUNT + 2 * n);
     }
 
     void allocateDescriptorSets()
@@ -428,48 +300,29 @@ private:
 
     void updateDescriptorSets()
     {
-        // Material UBOs (static — only views/buffers, no per-frame difference)
+        // Material UBOs (static — one per material, no per-frame difference)
         for (int i = 0; i < MAT_COUNT; ++i)
-        {
-            VkDescriptorBufferInfo bi{}; bi.buffer = materialUBOs[i]; bi.range = sizeof(MaterialData);
-            VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-            w.dstSet = materialDescSets[i]; w.dstBinding = 0;
-            w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            w.descriptorCount = 1; w.pBufferInfo = &bi;
-            vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
-        }
+            DescriptorWriter()
+                .writeBuffer(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    materialUBOs[i], 0, sizeof(MaterialData))
+                .update(device, materialDescSets[i]);
 
         // G-buffer + lighting UBO (per frame)
         for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
         {
-            // G-buffer set
-            VkDescriptorImageInfo posII{};
-            posII.sampler = gbufferSampler; posII.imageView = gBuffers[i].positionView;
-            posII.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            VkDescriptorImageInfo norII{posII}; norII.imageView = gBuffers[i].normalView;
-            VkDescriptorImageInfo albII{posII}; albII.imageView = gBuffers[i].albedoView;
+            DescriptorWriter()
+                .writeImage(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    gBuffers[i].positionView, gbufferSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                .writeImage(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    gBuffers[i].normalView,   gbufferSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                .writeImage(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    gBuffers[i].albedoView,   gbufferSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                .update(device, gbufferDescSets[i]);
 
-            auto mkImgWrite = [&](VkDescriptorSet set, uint32_t bind, VkDescriptorImageInfo& ii) {
-                VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-                w.dstSet = set; w.dstBinding = bind;
-                w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                w.descriptorCount = 1; w.pImageInfo = &ii; return w;
-            };
-
-            std::array<VkWriteDescriptorSet, 3> gbufWrites = {
-                mkImgWrite(gbufferDescSets[i], 0, posII),
-                mkImgWrite(gbufferDescSets[i], 1, norII),
-                mkImgWrite(gbufferDescSets[i], 2, albII),
-            };
-            vkUpdateDescriptorSets(device, 3, gbufWrites.data(), 0, nullptr);
-
-            // Lighting UBO set
-            VkDescriptorBufferInfo lbi{}; lbi.buffer = lightingUBOs[i]; lbi.range = sizeof(LightingUBO);
-            VkWriteDescriptorSet lw{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-            lw.dstSet = lightUBODescSets[i]; lw.dstBinding = 0;
-            lw.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            lw.descriptorCount = 1; lw.pBufferInfo = &lbi;
-            vkUpdateDescriptorSets(device, 1, &lw, 0, nullptr);
+            DescriptorWriter()
+                .writeBuffer(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    lightingUBOs[i], 0, sizeof(LightingUBO))
+                .update(device, lightUBODescSets[i]);
         }
     }
 
@@ -479,159 +332,58 @@ private:
 
     void createGeometryPipeline()
     {
-        VkShaderModule vert = loadShader(device, SHADER_DIR "/geometry.vert.spv");
-        VkShaderModule frag = loadShader(device, SHADER_DIR "/geometry.frag.spv");
+        VkShaderModule vert = createShaderModule(readFile(std::string(SHADER_DIR) + "/geometry.vert.spv"));
+        VkShaderModule frag = createShaderModule(readFile(std::string(SHADER_DIR) + "/geometry.frag.spv"));
 
-        VkPipelineShaderStageCreateInfo stages[2]{};
-        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;   stages[0].module = vert; stages[0].pName = "main";
-        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = frag; stages[1].pName = "main";
+        // Three colour formats for MRT (position, normal, albedo) + depth
+        auto [pipeline, layout] = GraphicsPipelineBuilder(device)
+            .vertShader(vert)
+            .fragShader(frag)
+            .vertexBinding<Vertex>()
+            .vertexAttribute(0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos))
+            .vertexAttribute(1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal))
+            .vertexAttribute(2, VK_FORMAT_R32G32_SFLOAT,    offsetof(Vertex, uv))
+            .pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, sizeof(GeomPush))
+            .descriptorSetLayout(geomMatLayout)
+            .colorFormat(FMT_POSITION)
+            .colorFormat(FMT_NORMAL)
+            .colorFormat(FMT_ALBEDO)
+            .depthFormat(depthFormat)
+            .build();
 
-        VkVertexInputBindingDescription binding{0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
-        std::array<VkVertexInputAttributeDescription,3> attrs{{
-            {0,0,VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex,pos)},
-            {1,0,VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex,normal)},
-            {2,0,VK_FORMAT_R32G32_SFLOAT,    offsetof(Vertex,uv)},
-        }};
-        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-        vi.vertexBindingDescriptionCount = 1;   vi.pVertexBindingDescriptions   = &binding;
-        vi.vertexAttributeDescriptionCount = 3; vi.pVertexAttributeDescriptions = attrs.data();
-
-        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        VkPipelineViewportStateCreateInfo vs{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-        vs.viewportCount = 1; vs.scissorCount = 1;
-        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-        rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_BACK_BIT;
-        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
-        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        ds.depthTestEnable = VK_TRUE; ds.depthWriteEnable = VK_TRUE;
-        ds.depthCompareOp  = VK_COMPARE_OP_LESS;
-
-        // Three colour blend attachments — one per G-buffer output
-        VkPipelineColorBlendAttachmentState att{};
-        att.colorWriteMask = VK_COLOR_COMPONENT_R_BIT|VK_COLOR_COMPONENT_G_BIT|
-                             VK_COLOR_COMPONENT_B_BIT|VK_COLOR_COMPONENT_A_BIT;
-        std::array<VkPipelineColorBlendAttachmentState,3> atts = {att, att, att};
-        VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        blend.attachmentCount = 3; blend.pAttachments = atts.data();
-
-        std::array<VkDynamicState,2> dyn{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-        VkPipelineDynamicStateCreateInfo dynCI{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-        dynCI.dynamicStateCount = 2; dynCI.pDynamicStates = dyn.data();
-
-        // Push constant: vertex only, mvp + model = 128 B
-        VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GeomPush)};
-        VkPipelineLayoutCreateInfo layoutCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layoutCI.setLayoutCount = 1; layoutCI.pSetLayouts = &geomMatLayout;
-        layoutCI.pushConstantRangeCount = 1; layoutCI.pPushConstantRanges = &push;
-        vkCreatePipelineLayout(device, &layoutCI, nullptr, &geomPipelineLayout);
-
-        // Dynamic Rendering — three colour formats + depth
-        VkFormat colorFmts[3] = {FMT_POSITION, FMT_NORMAL, FMT_ALBEDO};
-        VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-        rendering.colorAttachmentCount    = 3;
-        rendering.pColorAttachmentFormats = colorFmts;
-        rendering.depthAttachmentFormat   = depthFormat;
-
-        VkGraphicsPipelineCreateInfo pci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-        pci.pNext             = &rendering;
-        pci.stageCount        = 2; pci.pStages = stages;
-        pci.pVertexInputState = &vi; pci.pInputAssemblyState = &ia;
-        pci.pViewportState    = &vs; pci.pRasterizationState = &rs;
-        pci.pMultisampleState = &ms; pci.pDepthStencilState  = &ds;
-        pci.pColorBlendState  = &blend; pci.pDynamicState     = &dynCI;
-        pci.layout            = geomPipelineLayout;
-        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &geomPipeline) != VK_SUCCESS)
-            throw std::runtime_error("failed to create geometry pipeline");
-
-        vkDestroyShaderModule(device, vert, nullptr);
+        geomPipeline       = pipeline;
+        geomPipelineLayout = layout;
         vkDestroyShaderModule(device, frag, nullptr);
+        vkDestroyShaderModule(device, vert, nullptr);
     }
 
     void createLightingPipeline()
     {
-        VkShaderModule vert = loadShader(device, SHADER_DIR "/fullscreen.vert.spv");
-        VkShaderModule frag = loadShader(device, SHADER_DIR "/lighting.frag.spv");
+        VkShaderModule vert = createShaderModule(readFile(std::string(SHADER_DIR) + "/fullscreen.vert.spv"));
+        VkShaderModule frag = createShaderModule(readFile(std::string(SHADER_DIR) + "/lighting.frag.spv"));
 
-        VkPipelineShaderStageCreateInfo stages[2]{};
-        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;   stages[0].module = vert; stages[0].pName = "main";
-        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = frag; stages[1].pName = "main";
-
-        VkPipelineVertexInputStateCreateInfo   vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        VkPipelineViewportStateCreateInfo vs{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-        vs.viewportCount = 1; vs.scissorCount = 1;
-        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-        rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE; rs.lineWidth = 1.0f;
-        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        // No depth test/write in lighting pass — fullscreen quad
-        VkPipelineColorBlendAttachmentState att{};
-        att.colorWriteMask = VK_COLOR_COMPONENT_R_BIT|VK_COLOR_COMPONENT_G_BIT|
-                             VK_COLOR_COMPONENT_B_BIT|VK_COLOR_COMPONENT_A_BIT;
-        VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        blend.attachmentCount = 1; blend.pAttachments = &att;
-        std::array<VkDynamicState,2> dyn{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-        VkPipelineDynamicStateCreateInfo dynCI{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-        dynCI.dynamicStateCount = 2; dynCI.pDynamicStates = dyn.data();
-
+        // Fullscreen triangle — no vertex input, no depth, no culling
         // Two descriptor set layouts: set=0 G-buffers, set=1 lighting UBO
-        VkDescriptorSetLayout setLayouts[2] = {gbufferLayout, lightUBOLayout};
-        VkPipelineLayoutCreateInfo layoutCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layoutCI.setLayoutCount = 2; layoutCI.pSetLayouts = setLayouts;
-        vkCreatePipelineLayout(device, &layoutCI, nullptr, &lightPipelineLayout);
+        auto [pipeline, layout] = GraphicsPipelineBuilder(device)
+            .vertShader(vert)
+            .fragShader(frag)
+            .noVertexInput()
+            .noDepth()
+            .cullMode(VK_CULL_MODE_NONE)
+            .descriptorSetLayout(gbufferLayout)
+            .descriptorSetLayout(lightUBOLayout)
+            .colorFormat(swapChainImageFormat)
+            .build();
 
-        VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-        rendering.colorAttachmentCount    = 1;
-        rendering.pColorAttachmentFormats = &swapChainImageFormat;
-
-        VkGraphicsPipelineCreateInfo pci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-        pci.pNext             = &rendering;
-        pci.stageCount        = 2; pci.pStages = stages;
-        pci.pVertexInputState = &vi; pci.pInputAssemblyState = &ia;
-        pci.pViewportState    = &vs; pci.pRasterizationState = &rs;
-        pci.pMultisampleState = &ms; pci.pDepthStencilState  = &ds;
-        pci.pColorBlendState  = &blend; pci.pDynamicState     = &dynCI;
-        pci.layout            = lightPipelineLayout;
-        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &lightPipeline) != VK_SUCCESS)
-            throw std::runtime_error("failed to create lighting pipeline");
-
-        vkDestroyShaderModule(device, vert, nullptr);
+        lightPipeline       = pipeline;
+        lightPipelineLayout = layout;
         vkDestroyShaderModule(device, frag, nullptr);
+        vkDestroyShaderModule(device, vert, nullptr);
     }
 
     // =======================================================================
     // Geometry upload
     // =======================================================================
-
-    void uploadBuffer(const void* data, VkDeviceSize sz, VkBufferUsageFlags usage,
-        VkBuffer& buf, VkDeviceMemory& mem)
-    {
-        VkBuffer stagingBuf; VkDeviceMemory stagingMem;
-        createBuffer(sz, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            stagingBuf, stagingMem);
-        void* mapped;
-        vkMapMemory(device, stagingMem, 0, sz, 0, &mapped);
-        std::memcpy(mapped, data, sz);
-        vkUnmapMemory(device, stagingMem);
-        createBuffer(sz, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buf, mem);
-        oneShot([&](VkCommandBuffer cmd) {
-            VkBufferCopy r{0, 0, sz};
-            vkCmdCopyBuffer(cmd, stagingBuf, buf, 1, &r);
-        });
-        vkDestroyBuffer(device, stagingBuf, nullptr);
-        vkFreeMemory(device, stagingMem, nullptr);
-    }
 
     void createGeometry()
     {
@@ -711,9 +463,9 @@ private:
             addObj(fi, 36, 4);
         }
 
-        uploadBuffer(verts.data(), verts.size()*sizeof(Vertex),
+        uploadStagedBuffer(verts.data(), verts.size() * sizeof(Vertex),
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, sceneVB, sceneVBMem);
-        uploadBuffer(idx.data(),   idx.size()*sizeof(uint16_t),
+        uploadStagedBuffer(idx.data(),   idx.size() * sizeof(uint16_t),
             VK_BUFFER_USAGE_INDEX_BUFFER_BIT,  sceneIB, sceneIBMem);
     }
 
@@ -751,21 +503,6 @@ private:
     // =======================================================================
     // Lighting UBOs (per frame)
     // =======================================================================
-
-    void createLightingUBOs()
-    {
-        lightingUBOs.resize(MAX_FRAMES_IN_FLIGHT);
-        lightingUBOMem.resize(MAX_FRAMES_IN_FLIGHT);
-        lightingUBOMapped.resize(MAX_FRAMES_IN_FLIGHT);
-        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-        {
-            createBuffer(sizeof(LightingUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                lightingUBOs[i], lightingUBOMem[i]);
-            vkMapMemory(device, lightingUBOMem[i], 0, sizeof(LightingUBO), 0,
-                &lightingUBOMapped[i]);
-        }
-    }
 
     void updateLightingUBO(uint32_t frameIndex)
     {
@@ -826,7 +563,7 @@ private:
 protected:
     void onInitBeforeCommandPool() override
     {
-        createDepthResources();
+        createDepthResources(depthFormat, depthImage, depthMemory, depthImageView);
         createGBuffers();
         createSamplers();
         createDescriptorSetLayouts();
@@ -838,7 +575,8 @@ protected:
     {
         createGeometry();
         createMaterialUBOs();
-        createLightingUBOs();
+        createPersistentUBOs(sizeof(LightingUBO), MAX_FRAMES_IN_FLIGHT,
+            lightingUBOs, lightingUBOMem, lightingUBOMapped);
         createDescriptorPool();
         allocateDescriptorSets();
         updateDescriptorSets();
@@ -991,23 +729,20 @@ protected:
 
     void onCleanupSwapChain() override
     {
-        cleanupDepthResources();
+        destroyDepthResources(depthImage, depthMemory, depthImageView);
         destroyGBuffers();
     }
 
     void onRecreateSwapChain() override
     {
-        createDepthResources();
+        createDepthResources(depthFormat, depthImage, depthMemory, depthImageView);
         createGBuffers();
         updateDescriptorSets(); // re-point image views after recreation
     }
 
     void onCleanup() override
     {
-        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-            vkDestroyBuffer(device, lightingUBOs[i], nullptr);
-            vkFreeMemory(device, lightingUBOMem[i], nullptr);
-        }
+        destroyUBOs(lightingUBOs, lightingUBOMem);
         for (int i = 0; i < MAT_COUNT; ++i) {
             vkDestroyBuffer(device, materialUBOs[i], nullptr);
             vkFreeMemory(device, materialUBOMem[i], nullptr);
